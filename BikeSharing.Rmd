@@ -1,0 +1,280 @@
+---
+title: "Bike Sharing"
+output: html_document
+---
+
+NAME: Alice Giampino 
+
+BADGE: 790347
+
+NICKNAME: a.giampino 
+
+TEAM: FixedMind 
+
+ROUND: 1st
+
+### Summary:
+
+La nostra strategia è stata:
+
+1. Analisi esplorativa delle variabili
+2. Eliminazione delle variabili correlate
+3. Feature engineering, creazione di una nuova variabile
+4. Eliminazione di valori anomali e/o influenti
+5. Ensembe models: media ponderata tra le previsioni dei modelli random forest e xgboost
+
+
+### References:
+
+* Copy/paste from cran R [Guide to SuperLearner](https://cran.r-project.org/web/packages/SuperLearner/vignettes/Guide-to-SuperLearner.html)
+
+* Copy/paste from cran R [Package SuperLearner](https://cran.r-project.org/web/packages/SuperLearner/SuperLearner.pdf)
+
+
+### Models
+
+* Ensemble models: Random Forest (randomForest) & Extreme Grandient Boosting (xgboost)
+
+### Non-standard R packages
+
+* ggplot2
+* VIM
+* fasttime
+* lubridate
+* lattice
+* tree
+* rpart
+* party
+* corrplot
+* ROSE
+* caret
+* arm
+* polspline
+* glmnet
+* randomForest
+* xgboost
+* reshape2
+
+```{r startup, include = FALSE, message = FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = T, eval=T, message=F, warning=F, error=F, comment=NA, cache=F, R.options=list(width=220))
+```
+
+
+### R code to reproduce the last submission:
+
+```{r}
+
+library(ggplot2)
+library(VIM)
+library(fasttime)
+library(lubridate)
+library(car)
+library(MASS)
+library(lattice)
+library(tree)
+library(rpart)
+library(party)
+library(corrplot)
+library(ROSE)
+library(caret)
+library(dplyr)
+library(SuperLearner)
+library(arm)
+library(polspline)
+library(glmnet)
+library(randomForest)
+library(xgboost)
+library(reshape2)
+
+train_bike <- read.csv("http://bee-fore.s3-eu-west-1.amazonaws.com/datasets/99.csv",
+                       stringsAsFactors = T)
+
+test_bike <- read.csv("http://bee-fore.s3-eu-west-1.amazonaws.com/datasets/100.csv",
+                       stringsAsFactors = T)
+
+train_bike$count = log1p(train_bike$count)
+
+train_bike %>% 
+  mutate(datetime = fastPOSIXct(datetime, "GMT")) %>% 
+  mutate(hour = hour(datetime),
+         month = month(datetime),
+         year = year(datetime),
+         wday = wday(datetime)) -> train_bike
+test_bike %>% 
+  mutate(datetime = fastPOSIXct(datetime, "GMT")) %>% 
+  mutate(hour = hour(datetime),
+         month = month(datetime),
+         year = year(datetime),
+         wday = wday(datetime)) -> test_bike
+
+#EDA -------------------------------------------------------------------------------------------
+
+train_bike$season <- as.factor(train_bike$season)
+train_bike$holiday <- as.factor(train_bike$holiday)
+train_bike$workingday <- as.factor(train_bike$workingday)
+train_bike$weather <- as.factor(train_bike$weather)
+train_bike$hour <- as.factor(train_bike$hour)
+train_bike$month <- as.factor(train_bike$month)
+train_bike$year <- as.factor(train_bike$year)
+train_bike$wday <- as.factor(train_bike$wday)
+
+test_bike$season <- as.factor(test_bike$season)
+test_bike$holiday <- as.factor(test_bike$holiday)
+test_bike$workingday <- as.factor(test_bike$workingday)
+test_bike$weather <- as.factor(test_bike$weather)
+test_bike$hour <- as.factor(test_bike$hour)
+test_bike$month <- as.factor(test_bike$month)
+test_bike$year <- as.factor(test_bike$year)
+test_bike$wday <- as.factor(test_bike$wday)
+
+test_bike$count <- NA
+train_bike <-train_bike[ ,-c(1, 10, 11)]
+test_bike <- test_bike[, -1]
+dati <- rbind(train_bike, test_bike)
+
+#conteggio discrimina poco wday
+n <- nrow(train_bike)
+m <- nrow(test_bike)
+# C <- cor(dati[1:n,5:9])
+# corrplot(C, type = "upper", method = "number", diag = FALSE, tl.srt=30)
+
+dati <- dati[,-5] #togliamo temp perchè è molto correlata con atemp
+train_bike <- train_bike[,-5]
+test_bike <- test_bike[,-5]
+
+#Significatività delle variabili, outlier multivariati e osservazioni influenti:
+fit_lm <- lm(count~.,data=train_bike) 
+#summary(fit_lm)
+#alcuni coefficienti non giungono a convergenza (month6, month9, month12, wday6)
+
+#FEATURE ENGINEERING ---------------------------------------------------------------------------
+
+train_bike$day_type <- vector(length=nrow(train_bike))
+train_bike$weekend <- vector(length=nrow(train_bike))
+for (i in 1:nrow(train_bike)){
+  if (train_bike$wday[i] == "7" | train_bike$wday[i] == "1"){
+    train_bike$weekend[i] <- "1"
+  }
+  else { train_bike$weekend[i] <- "0" }
+}
+train_bike$weekend <- as.factor(train_bike$weekend)
+
+for (i in 1:nrow(train_bike)){
+  if (train_bike$weekend[i] == "1"){
+    train_bike$day_type[i] <- "1" #weekend
+  }
+  else if(train_bike$workingday[i] == "1"){
+    train_bike$day_type[i] <- "2" #giorno lavorativo
+  }
+  else {
+    train_bike$day_type[i] <- "3" #giorno di vacanza settimanale
+  }
+}
+train_bike$day_type <- as.factor(train_bike$day_type)
+
+#divisione training test e test set:
+
+set.seed(123)
+n<-round(nrow(train_bike)*0.66)
+sel<-sample(1:nrow(train_bike),n,rep=F)
+train<-train_bike[sel,]
+rownames(train)<-1:n
+test<-train_bike[-sel,]
+
+#outlierTest(fit_lm)
+#31, 719, 397
+#influencePlot(fit_lm)
+#31, 5632
+
+#togliamo outlier e influenti 
+train <-train[-c(31, 397, 719, 5632),]
+
+#Root mean square error:
+RMSE <- function(x,y){
+  a <- sqrt(sum((x-y)^2)/length(y))
+  return(a)
+}
+
+## Modelli ---------------------------------------------------------------------------------------
+
+# ENSEMBLE MODELS --------------------------------------------------------------------------------
+
+# Set the seed
+set.seed(150)
+y <- train[,8]
+x <- data.frame(train[,-8])
+
+# Fit the ensemble model
+
+model <- SuperLearner(y,
+                      x,
+                      family=gaussian(),
+                      SL.library=list("SL.randomForest",
+                                      "SL.xgboost"
+                      ))
+
+# Return the model
+#model
+
+#previsione su train e test:
+newx <- data.frame(test)[,-8]
+previsti_ens <- predict.SuperLearner(model, newdata=newx)$pred
+RMSE_ens <- RMSE(previsti_ens, test$count)
+RMSE_ens <- round(RMSE_ens, digits = 3) #31.9
+EF_ens <- 1-(sum((test$count-previsti_ens)^2)/sum((test$count-mean(test$count))^2))
+#0.951
+
+#Previsione su test_bike:
+
+set.seed(150)
+y <- train_bike[,8]
+x <- data.frame(train_bike[,-8])
+
+# Fit the ensemble model
+
+model <- SuperLearner(y,
+                      x,
+                      family=gaussian(),
+                      SL.library=list("SL.randomForest",
+                                      "SL.xgboost"
+                      ))
+
+# Return the model
+#model
+
+#                          Risk      Coef
+# SL.randomForest_All 0.1237324 0.3852191
+# SL.xgboost_All      0.1060216 0.6147809
+
+test_bike$day_type <- vector(length=nrow(test_bike))
+test_bike$weekend <- vector(length=nrow(test_bike))
+for (i in 1:nrow(test_bike)){
+  if (test_bike$wday[i] == "7" | test_bike$wday[i] == "1"){
+    test_bike$weekend[i] <- "1"
+  }
+  else { test_bike$weekend[i] <- "0" }
+}
+test_bike$weekend <- as.factor(test_bike$weekend)
+
+for (i in 1:nrow(test_bike)){
+  if (test_bike$weekend[i] == "1"){
+    test_bike$day_type[i] <- "1" #weekend
+  }
+  else if(test_bike$workingday[i] == "1"){
+    test_bike$day_type[i] <- "2" #giorno lavorativo
+  }
+  else {
+    test_bike$day_type[i] <- "3" #giorno di vacanza settimanale
+  }
+}
+test_bike$day_type <- as.factor(test_bike$day_type)
+
+newx <- data.frame(test_bike)[,-12]
+pred <- predict.SuperLearner(model, newdata=newx)$pred
+yhat <- expm1(pred)
+
+# show first 6 predicted values
+head(yhat)
+```
+
+
