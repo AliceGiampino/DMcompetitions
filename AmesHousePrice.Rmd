@@ -1,0 +1,461 @@
+---
+title: "Ames House Price"
+output: html_document
+---
+
+NAME: Alice Giampino 
+
+BADGE: 790347
+
+NICKNAME: a.giampino 
+
+TEAM: FixedMind 
+
+ROUND: 1st
+
+
+### Summary:
+
+La mia strategia è stata:
+
+1. Analisi esplorativa delle variabili e ricodifica corretta
+2. Imputazione dei missing 
+3. Eliminazione di variabili non ritenute importanti al fine di spiegare SalePrice
+4. Feature engineering, creazione di nuove variabili
+5. Modelli testati sia sul dataset con le nuove variabili che sul dataset senza di esse
+6. Generalized Boosted Regression Modeling su dataset senza le nuove variabili create
+
+### References:
+
+* Copy/paste from kaggle [Kaggle Erik Bruin](https://www.kaggle.com/erikbruin/house-prices-lasso-xgboost-and-a-detailed-eda)
+
+* Copy/paste from cran R [Package gbm](https://cran.r-project.org/web/packages/gbm/gbm.pdf)
+
+* Advice from datascience+ [Data Science Plus](https://datascienceplus.com/gradient-boosting-in-r/)
+
+
+### Models
+
+* Generalized Boosted Regression Modeling (gbm)
+
+### Non-standard R packages
+
+* ggplot2
+* VIM
+* fasttime
+* lubridate
+* lattice
+* tree
+* rpart
+* party
+* corrplot
+* ROSE
+* caret
+* arm
+* polspline
+* glmnet
+* randomForest
+* xgboost
+* reshape2
+
+```{r startup, include = FALSE, message = FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = T, eval=T, message=F, warning=F, error=F, comment=NA, cache=F, R.options=list(width=220))
+```
+
+
+### R code to reproduce the last submission:
+
+```{r}
+
+# COMPETITION: AMES HOUSE PRICES ------------------------------------------------------------------------------------------------
+
+rm(list=ls())
+library(ggplot2)
+library(VIM)
+library(rpart)
+library(nnet)
+library(car)
+library(tree)
+library(plyr)
+library(dplyr)
+library(corrplot)
+library(caret)
+library(gridExtra)
+library(scales)
+library(Rmisc)
+library(ggrepel)
+library(randomForest)
+library(psych)
+library(xgboost)
+library(glmnet)
+library(SuperLearner)
+require(leaps)
+
+train_house <- read.csv("http://bee-fore.s3-eu-west-1.amazonaws.com/datasets/60.csv",
+                        header = TRUE, stringsAsFactors = FALSE)
+n <- nrow(train_house)
+test_house <- read.csv("http://bee-fore.s3-eu-west-1.amazonaws.com/datasets/61.csv",
+                       header = TRUE, stringsAsFactors = FALSE)
+test_house$SalePrice <- NA
+m <- nrow(test_house)
+combi <- rbind(train_house, test_house)
+
+# EDA ---------------------------------------------------------------------------------------
+
+#Tolgo order perchè è un ID che ripete ordine delle oss:
+combi <- combi[,-1]
+
+#Sistemazione variabili:
+
+#Nominali
+combi$PID <- as.character(combi$PID)
+combi$MS.SubClass <- as.factor(combi$MS.SubClass)
+combi$MS.Zoning <- as.factor(combi$MS.Zoning)
+combi$Street <- as.factor(combi$Street)
+combi$Alley <- as.factor(combi$Alley)
+combi$Land.Contour <- as.factor(combi$Land.Contour)
+combi$Lot.Config <- as.factor(combi$Lot.Config)
+combi$Neighborhood <- as.factor(combi$Neighborhood)
+combi$Condition.1 <- as.factor(combi$Condition.1)
+combi$Condition.2 <- as.factor(combi$Condition.2)
+combi$Bldg.Type <- as.factor(combi$Bldg.Type)
+combi$House.Style <- as.factor(combi$House.Style)
+combi$Roof.Style <- as.factor(combi$Roof.Style)
+combi$Roof.Matl <- as.factor(combi$Roof.Matl)
+combi$Exterior.1st <- as.factor(combi$Exterior.1st)
+combi$Exterior.2nd <- as.factor(combi$Exterior.2nd)
+combi$Mas.Vnr.Type <- as.factor(combi$Mas.Vnr.Type)
+combi$Foundation <- as.factor(combi$Foundation)
+combi$Heating <- as.factor(combi$Heating)
+combi$Central.Air <- as.factor(combi$Central.Air)
+combi$Garage.Type <- as.factor(combi$Garage.Type)
+combi$Misc.Feature <- as.factor(combi$Misc.Feature)
+combi$Sale.Type <- as.factor(combi$Sale.Type)
+combi$Sale.Condition <- as.factor(combi$Sale.Condition)
+
+#Ordinali
+combi$Lot.Shape <- factor(as.factor(combi$Lot.Shape), levels=c("Reg","IR1","IR2","IR3"))
+combi$Utilities <- factor(as.factor(combi$Utilities), levels=c("AllPub","NoSewr","NoSeWa"))
+combi$Land.Slope <- factor(as.factor(combi$Land.Slope), levels=c("Gtl","Mod","Sev"))
+combi$Overall.Qual <- factor(as.factor(combi$Overall.Qual), levels=c("10","9","8","7","6","5","4","3","2","1"))
+combi$Overall.Cond <- factor(as.factor(combi$Overall.Cond), levels=c("10","9","8","7","6","5","4","3","2","1"))
+combi$Exter.Qual <- factor(as.factor(combi$Exter.Qual), levels=c("Ex","Gd","TA","Fa", "Po"))
+combi$Exter.Cond <- factor(as.factor(combi$Exter.Cond), levels=c("Ex","Gd","TA","Fa", "Po"))
+combi$Bsmt.Qual <- factor(as.factor(combi$Bsmt.Qual), levels=c("Ex","Gd","TA","Fa", "Po", NA))
+combi$Bsmt.Cond <- factor(as.factor(combi$Bsmt.Cond), levels=c("Ex","Gd","TA","Fa", "Po", NA))
+combi$Bsmt.Exposure <- factor(as.factor(combi$Bsmt.Exposure), levels=c("Gd", "Av", "Mn","No", NA))
+combi$BsmtFin.Type.1 <- factor(as.factor(combi$BsmtFin.Type.1), levels=c("GLQ","ALQ","BLQ","Rec","LwQ","Unf",NA))
+combi$BsmtFin.Type.2 <- factor(as.factor(combi$BsmtFin.Type.2), levels=c("GLQ","ALQ","BLQ","Rec","LwQ","Unf",NA))
+combi$Heating.QC <- factor(as.factor(combi$Heating.QC), levels=c("Ex","Gd","TA","Fa", "Po", NA))
+combi$Electrical <- factor(as.factor(combi$Electrical), levels=c("SBrkr", "FuseA", "FuseF", "FuseP", "Mix"))
+combi$Kitchen.Qual <- factor(as.factor(combi$Kitchen.Qual), levels=c("Ex","Gd","TA","Fa", "Po"))
+combi$Functional <- factor(as.factor(combi$Functional), levels=c("Typ", "Min1", "Min2", "Mod", "Maj1", "Maj2", "Sev", "Sal"))
+combi$Fireplace.Qu <- factor(as.factor(combi$Fireplace.Qu), levels=c("Ex","Gd","TA","Fa", "Po", NA))
+combi$Garage.Finish <- factor(as.factor(combi$Garage.Finish), levels=c("Fin", "RFn", "Unf", NA))
+combi$Garage.Qual <- factor(as.factor(combi$Garage.Qual), levels=c("Ex","Gd","TA","Fa", "Po", NA))
+combi$Garage.Cond <- factor(as.factor(combi$Garage.Cond), levels=c("Ex","Gd","TA","Fa", "Po", NA))
+combi$Paved.Drive <- factor(as.factor(combi$Paved.Drive), levels=c("Y","P", "N"))
+combi$Pool.QC <- factor(as.factor(combi$Pool.QC), levels=c("Ex","Gd","TA","Fa",NA))
+combi$Fence <- factor(as.factor(combi$Fence), levels=c("GdPrv", "MnPrv", "GdWo", "MnWw", NA))
+
+#Continue
+combi$Lot.Frontage <- as.numeric(combi$Lot.Frontage)
+combi$Lot.Area <- as.numeric(combi$Lot.Area)
+combi$Mas.Vnr.Area <- as.numeric(combi$Mas.Vnr.Area)
+combi$BsmtFin.SF.1 <- as.numeric(combi$BsmtFin.SF.1)
+combi$BsmtFin.SF.2 <- as.numeric(combi$BsmtFin.SF.2)
+combi$Bsmt.Unf.SF <- as.numeric(combi$Bsmt.Unf.SF)
+combi$Total.Bsmt.SF <- as.numeric(combi$Total.Bsmt.SF)
+combi$X1st.Flr.SF <- as.numeric(combi$X1st.Flr.SF)
+combi$X2nd.Flr.SF <- as.numeric(combi$X2nd.Flr.SF)
+combi$Low.Qual.Fin.SF <- as.numeric(combi$Low.Qual.Fin.SF)
+combi$Gr.Liv.Area <- as.numeric(combi$Gr.Liv.Area)
+combi$Garage.Area <- as.numeric(combi$Garage.Area)
+combi$Wood.Deck.SF <- as.numeric(combi$Wood.Deck.SF)
+combi$Open.Porch.SF <- as.numeric(combi$Open.Porch.SF)
+combi$Enclosed.Porch <- as.numeric(combi$Enclosed.Porch)
+combi$X3Ssn.Porch <- as.numeric(combi$X3Ssn.Porch)
+combi$Screen.Porch <- as.numeric(combi$Screen.Porch)
+combi$Pool.Area <- as.numeric(combi$Pool.Area)
+combi$Misc.Val <- as.numeric(combi$Misc.Val)
+combi$SalePrice <- as.numeric(combi$SalePrice)
+
+#MISSING e MISSING IMPUTATION (così non ho problemi nel fare modelli, le vaiabili le posso valutare meglio)
+#aggr(combi, prop = FALSE, combined = TRUE, numbers = TRUE, only.miss=T, sortVars = TRUE, sortCombs = TRUE)
+#aggr(combi, prop = FALSE, numbers = TRUE, only.miss=T, sortVars = TRUE, plot=F)
+
+#Emerge che Pool.QC ha solo 11 casi (qualità piscina, 2914) che si riferiscono alle sole case con piscina:
+levels(combi$Pool.QC) <- c(levels(combi$Pool.QC), "NoPool")
+combi$Pool.QC[is.na(combi$Pool.QC)] <- "NoPool"
+
+
+#Misc.Feature è la seconda variabile con più missing: 2820
+levels(combi$Misc.Feature) <- c(levels(combi$Misc.Feature), "NoMisc")
+combi$Misc.Feature[is.na(combi$Misc.Feature)] <- "NoMisc"
+
+#Alley ha 2727 missing, è l'accesso all'abitazione: ghiaia, pavimentato, nessun accesso
+#Quindi 2727 case non hanno nessun accesso particolare all'abitazione
+levels(combi$Alley) <- c(levels(combi$Alley), "No Particular Alley")
+combi$Alley[is.na(combi$Alley)] <- "No Particular Alley"
+
+#Fence 2358 missing, relativi a case che non hanno staccionate
+levels(combi$Fence) <- c(levels(combi$Fence), "No Fence")
+combi$Fence[is.na(combi$Fence)] <- "No Fence"
+
+# Fireplace.Qu 1422 missing, questa variabile si riferisce alla qualità del camino
+#gli NA sono relativi a case senza camino
+levels(combi$Fireplace.Qu) <- c(levels(combi$Fireplace.Qu), "No Fireplace")
+combi$Fireplace.Qu[is.na(combi$Fireplace.Qu)] <- "No Fireplace"
+
+# Lot.Frontage 490 missing, distanza casa-strada
+#NA potrebbero essere veri NA oppure sono 0 piedi casa-strada poichè il minimo dal summary è 21
+#Decido di imputare 0 al posto di NA, cioè considero la casa adiacente alla strada
+combi$Lot.Frontage[is.na(combi$Lot.Frontage)] <- 0
+
+#Garage missing:
+# Garage.Finish 159 missing, se garage è finito, finito in modo grezzo, non finito 
+levels(combi$Garage.Finish) <- c(levels(combi$Garage.Finish), "No Garage")
+combi$Garage.Finish[is.na(combi$Garage.Finish)] <- "No Garage"
+
+# Garage.Yr.Blt 159, anno di costruzione del garage, se non c'è garage sarà missing
+
+combi$Garage.Yr.Blt[which(combi$Garage.Yr.Blt>2010)] <- 2007
+
+combi$Garage.Yr.Blt[which(is.na(combi$Garage.Yr.Blt))] <- combi$Year.Built[which(is.na(combi$Garage.Yr.Blt))]
+
+# Garage.Qual 159, se non c'è garage c'è missing
+levels(combi$Garage.Qual) <- c(levels(combi$Garage.Qual), "No Garage")
+combi$Garage.Qual[is.na(combi$Garage.Qual)] <- "No Garage"
+
+# Garage.Cond 159, se non c'è garage c'è missing
+levels(combi$Garage.Cond) <- c(levels(combi$Garage.Cond), "No Garage")
+combi$Garage.Cond[is.na(combi$Garage.Cond)] <- "No Garage"
+
+# Garage.Type 157, garage location 
+levels(combi$Garage.Type) <- c(levels(combi$Garage.Type), "No Garage")
+combi$Garage.Type[is.na(combi$Garage.Type)] <- "No Garage"
+
+#Basement:
+levels(combi$Bsmt.Exposure) <- c(levels(combi$Bsmt.Exposure), "No Basement")
+combi$Bsmt.Exposure[is.na(combi$Bsmt.Exposure)] <- "No Basement"
+
+# Bsmt.Qual 80 missing, valutazione altezza del seminterrato
+levels(combi$Bsmt.Qual) <- c(levels(combi$Bsmt.Qual), "No Basement")
+combi$Bsmt.Qual[is.na(combi$Bsmt.Qual)] <- "No Basement"
+
+# Bsmt.Cond 80 missing, valutazione condizioni generali del seminterrato
+levels(combi$Bsmt.Cond) <- c(levels(combi$Bsmt.Cond), "No Basement")
+combi$Bsmt.Cond[is.na(combi$Bsmt.Cond)] <- "No Basement"
+
+# BsmtFin.Type.1 80 missing, rating dell'area del seminterrato finito
+levels(combi$BsmtFin.Type.1) <- c(levels(combi$BsmtFin.Type.1), "No Basement")
+combi$BsmtFin.Type.1[is.na(combi$BsmtFin.Type.1)] <- "No Basement"
+
+# BsmtFin.Type.2 81 missing, rating dell'area del seminterrato finito (se di tipi differenti)
+levels(combi$BsmtFin.Type.2) <- c(levels(combi$BsmtFin.Type.2), "No Multi Basement")
+combi$BsmtFin.Type.2[is.na(combi$BsmtFin.Type.2)] <- "No Multi Basement"
+
+# Mas.Vnr.Area 23 missing, area di rivestimento delle pareti
+#Imputo i valori mancanti per Mas.Vnr.Type con una regressione lineare:
+fit <- multinom(Mas.Vnr.Type~Year.Built+Roof.Style+Roof.Style+Neighborhood+Foundation, family=binomial,
+                combi[-c(which(is.na(combi$Mas.Vnr.Area))),])
+prev <- predict(fit, newdata=combi[c(which(is.na(combi$Mas.Vnr.Area))),], type="class")
+combi$Mas.Vnr.Type[c(which(is.na(combi$Mas.Vnr.Area)))] <- prev
+
+combi$Mas.Vnr.Area[c(which(combi$Mas.Vnr.Type=="None"))] <- 0
+
+fit1 <- lm(Mas.Vnr.Area~Mas.Vnr.Type+Year.Built+Roof.Style+Roof.Style+Neighborhood+Foundation,
+           combi[!is.na(combi$Mas.Vnr.Area),])
+combi$Mas.Vnr.Area[c(which(is.na(combi$Mas.Vnr.Area)))] <- predict(fit1, newdata=combi[c(which(is.na(combi$Mas.Vnr.Area))),])
+
+combi$Mas.Vnr.Type <- factor(combi$Mas.Vnr.Type)
+
+
+# Bsmt.Full.Bath 2 missing, seminterrato con bagno completo
+combi$Bsmt.Full.Bath[is.na(combi$Bsmt.Full.Bath)] <- 0
+
+# Bsmt.Half.Bath 2 missing, seminterrato con bagno non completo, come sopra
+combi$Bsmt.Full.Bath[is.na(combi$Bsmt.Half.Bath)] <- 0
+
+# BsmtFin.SF.1 1 missing, area seminterrato
+combi$BsmtFin.SF.1[is.na(combi$BsmtFin.SF.1)] <- 0
+
+# BsmtFin.SF.2 1 missing, area seminterrato quando è multi tipo
+combi$BsmtFin.SF.2[is.na(combi$BsmtFin.SF.2)] <- 0
+
+# Bsmt.Unf.SF 1 missing, unfinished square feet basement area
+combi$Bsmt.Unf.SF[is.na(combi$Bsmt.Unf.SF)] <- 0
+
+# Total.Bsmt.SF 1 missing, area tot. del seminterrato
+combi$Total.Bsmt.SF[is.na(combi$Total.Bsmt.SF)] <- 0
+
+# Garage.Cars 1 missing, numero di auto tenute in garage
+combi$Garage.Cars[which(is.na(combi$Garage.Cars))] <- 0
+
+# Garage.Area 1 missing, area del garage 
+combi$Garage.Area[which(is.na(combi$Garage.Area))] <- 0
+
+# Electrical 1 missing, electrical system
+#Il sistema elettrico può essere in comune tra case delle stesso quartiere che non hanno come riscaldamento 
+#aggiuntivo un camino, che abbiano lo stesso tipo di riscaldamento (Heating and Heating.Qu) e con central air conditioning in comune
+#combi[which(combi$Fireplace.Qu == "No Fireplace" & combi$Fireplaces == 0 & combi$Heating == "GasA" & combi$Heating.QC=="Gd" & combi$Central.Air == "Y"),]
+#si nota che la maggior parte delle case che hanno in comune queste variabili hanno come valore modale per 
+#Electrical "SBrkr", cioè "Standard Circuit Breakers & Romex" allora si imputa questo valore
+combi$Electrical[which(is.na(combi$Electrical))] <- "SBrkr"
+
+train_house <- combi[1:n,]
+
+#Elimino PID e Utilities
+combi <- combi[,-c(1,10)]
+train_house <- combi[1:n,]
+
+# quick_RF <- randomForest(x=combi[1:n,-79], y=combi$SalePrice[1:n], ntree=100,importance=TRUE)
+# imp_RF <- importance(quick_RF)
+# imp_DF <- data.frame(Variables = row.names(imp_RF), MSE = imp_RF[,1])
+# imp_DF <- imp_DF[order(imp_DF$MSE, decreasing = TRUE),]
+# 
+# ggplot(imp_DF[1:20,], aes(x=reorder(Variables, MSE), y=MSE, fill=MSE)) + 
+#   geom_bar(stat = 'identity') + 
+#   labs(x = 'Variables', y= '% increase MSE if variable is randomly permuted') + 
+#   coord_flip() + theme(legend.position="none")
+#Le principali variabili che emergono sono quelle numeriche
+#di categoriche c'è il quartiere, il tipo di abitazione, il camino, garage
+#(Neighborhood, MS.SubClass, ecc)
+
+# FEATURE ENGINEERING ---------------------------------------------------------------------
+
+##1
+#Supponendo che case più vecchie siano vendute a meno, allora 
+#visto che Year.Built, Year.Remod.Add e Yr.Sold riguardano l'anno di costruzione o rinnovo della casa
+#a parità di anno una casa costruita a nuovo è venduta di più rispetto ad una vecchia solo rinnovata.
+#Poi se la casa non è stata rinnovata c'è anno di costruzione della casa
+combi$Rinnovata <- ifelse(combi$Year.Built==combi$Year.Remod.Add, 0, 1) #0=No rinnovamento, 1=rinnovata
+combi$Eta <- as.numeric(combi$Yr.Sold)-combi$Year.Remod.Add
+#costruite nel 2007, vendute nel 2007, rinnovate nel 2008
+combi$Eta[c(1112,2530,2289)] <- 0
+
+#dove c'è casa nuova spiega bene i prezzi più alti e viceversa
+combi$Yr.Sold <- as.factor(combi$Yr.Sold)
+
+##2
+#Si potrebbe creare una variabile solo per i bagni invece che separarli
+#cioè sapere quanti bagni totali ha la casa, i bagni senza doccia e vasca valgono metà
+combi$Tot.Bagni <- combi$Full.Bath + (combi$Half.Bath*0.5) + combi$Bsmt.Full.Bath + (combi$Bsmt.Half.Bath*0.5)
+
+##3
+#Si potrebbe creare una variabile se la casa è ricca o no 
+combi$Ricca <- ifelse(combi$Misc.Feature=="NoMisc", 0, 1) #0 se non è ricca
+
+##4
+#Mettere insieme i quartieri ricchi e quelli poveri
+# neig1 <- ggplot(combi[!is.na(combi$SalePrice),], aes(x=reorder(Neighborhood, SalePrice, FUN=mean), y=SalePrice)) +
+#   geom_bar(stat='summary', fun.y = "median", fill='blue') +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+#   scale_y_continuous(breaks= seq(0, 800000, by=50000), labels = comma) +
+#   geom_label(stat = "count", aes(label = ..count.., y = ..count..), size=3) +
+#   geom_hline(yintercept=163000, linetype="dashed", color = "red") #media
+# neig2 <- ggplot(combi[!is.na(combi$SalePrice),], aes(x=reorder(Neighborhood, SalePrice, FUN=median), y=SalePrice)) +
+#   geom_bar(stat='summary', fun.y = "median", fill='blue') +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+#   scale_y_continuous(breaks= seq(0, 800000, by=50000), labels = comma) +
+#   geom_label(stat = "count", aes(label = ..count.., y = ..count..), size=3) +
+#   geom_hline(yintercept=163000, linetype="dashed", color = "red") #mediana
+# grid.arrange(neig1, neig2)
+#i 4 quartieri più ricchi corrispondono, come i 4 più poveri, 
+#invece quelli centrali variano molto come ordine, tranne i 3 centrali
+#allora creo una variabile a 5 livelli
+combi$AggrNeig[combi$Neighborhood %in% c('MeadowV', 'IDOTRR', 'BrDale', 'OldTown')] <- 0
+combi$AggrNeig[combi$Neighborhood %in% c('Blueste', 'Edwards', 'BrkSide','Sawyer','SWISU','NAmes','NPkVill','Mitchel')] <- 1
+combi$AggrNeig[combi$Neighborhood %in% c('NWAmes', 'Gilbert', 'Sawyer')] <- 2
+combi$AggrNeig[!combi$Neighborhood %in% c('NWAmes', 'Gilbert', 'Sawyer','MeadowV', 'IDOTRR', 'BrDale', 'OldTown',
+                                          'Blueste', 'Edwards', 'BrkSide','Sawyer','SWISU',
+                                          'NAmes','NPkVill','Mitchel','StoneBr', 'NridgHt', 'NoRidge', 'GrnHill')] <- 3
+combi$AggrNeig[combi$Neighborhood %in% c('StoneBr', 'NridgHt', 'NoRidge', 'GrnHill')] <- 4
+
+
+
+##5
+#Gr.Liv.Area è la somma di X1st.Flr.SF e X2nd.Flr.SF o di X1st.Flr.SF+X2nd.Flr.SF+Low.Qual.Fin.SF  
+combi$Tot.Area <- (combi$Gr.Liv.Area + combi$Total.Bsmt.SF)
+
+
+##6
+#Aggregare variabili relative alla veranda (Porch)
+combi$Tot.Porch.Area <- combi$Open.Porch.SF+combi$Enclosed.Porch+combi$X3Ssn.Porch+combi$Screen.Porch
+
+# FEATURE SELECTION --------------------------------------------------------------------------
+
+#Rimuovere anno costruzione del garage poichè alcuni anni sono stati imputati con anno di 
+#costruzione della casa anche se non c'era il garage e sono molto correlate le due variabili 0.83
+#e rimuoviamo anche le altre variabili molto correlate
+rimuovere <- c('Year.Remod.Add', 'Garage.Yr.Blt', 'Garage.Area', 'Garage.Cond', 'Total.Bsmt.SF',
+               'Open.Porch.SF','Enclosed.Porch', 'X3Ssn.Porch','Screen.Porch','X1st.Flr.SF',
+               'X2nd.Flr.SF','Low.Qual.Fin.SF','Neighborhood','Misc.Feature', 
+               "Bsmt.Full.Bath","Bsmt.Half.Bath", "Full.Bath", "Half.Bath", 'Gr.Liv.Area')
+
+combi_rim <- combi[,!(names(combi) %in% rimuovere)]
+set.seed(123)
+train_rim <- combi_rim[1:n,]
+n<-round(nrow(train_rim)*0.8)
+sel<-sample(1:nrow(train_rim),n,rep=F)
+train<-train_rim[sel,]
+rownames(train)<-1:n
+test<-train_rim[-sel,]
+
+#Importanza variabili con RF:
+# quick_RF <- randomForest(x=train[,!names(combi_rim)=="SalePrice"], y=train$SalePrice, ntree=100,importance=TRUE)
+# imp_RF <- importance(quick_RF)
+# imp_DF <- data.frame(Variables = row.names(imp_RF), MSE = imp_RF[,1])
+# imp_DF <- imp_DF[order(imp_DF$MSE, decreasing = TRUE),]
+# 
+# ggplot(imp_DF[1:20,], aes(x=reorder(Variables, MSE), y=MSE, fill=MSE)) + 
+#   geom_bar(stat = 'identity') + 
+#   labs(x = 'Variables', y= '% increase MSE if variable is randomly permuted') + 
+#   coord_flip() + theme(legend.position="none")
+
+# MODELLI -----------------------------------------------------------------------------------
+
+library(gbm)
+library(Metrics)
+library("devtools")
+library(parallel)
+
+#install_github("gbm-developers/gbm")
+
+set.seed(156)
+fit <- gbm(log10(SalePrice)~., data=train, distribution="gaussian", cv.folds=10, shrinkage = 0.01, n.trees=1000, interaction.depth = 5)
+
+pred <- predict(fit, newdata=test)
+
+#rmsle(test$SalePrice, 10^(pred))
+
+
+#Rimozione delle variabili nuove:
+rimuovere2 <- c('Ricca', 'CasaNuova', 'Rinnovata', 'Tot.Area', 'Tot.Bagni', "AggrNeig")
+
+combi_rim2 <- combi[,!(names(combi) %in% rimuovere2)]
+set.seed(123)
+train_rim2 <- combi_rim2[1:n,]
+n<-round(nrow(train_rim2)*0.8)
+sel<-sample(1:nrow(train_rim2),n,rep=F)
+train<-train_rim2[sel,]
+rownames(train)<-1:n
+test<-train_rim2[-sel,]
+
+set.seed(156)
+fit <- gbm(log10(SalePrice)~., data=train, distribution="gaussian", cv.folds=10, shrinkage = 0.01, n.trees=1000, interaction.depth = 5)
+
+pred <- predict(fit, newdata=test)
+
+#rmsle(test$SalePrice, 10^(pred)) #13.1
+
+
+fit <- gbm(log10(SalePrice)~., data=train_rim2, distribution="gaussian", cv.folds=10, shrinkage = 0.005, n.trees=1500, interaction.depth = 5)
+test_rim2 <- combi_rim2[1461:2930,]
+yhat = 10^predict(fit, newdata=test_rim2)
+
+
+# show first 6 predicted values
+head(yhat)
+```
+
