@@ -157,29 +157,17 @@ $(document).ready(function () {
 <div id="non-standard-r-packages" class="section level3">
 <h3>Non-standard R packages</h3>
 <ul>
-<li>ggplot2</li>
-<li>VIM</li>
-<li>scales</li>
-<li>gridExtra</li>
-<li>caret</li>
-<li>dplyr</li>
-<li>plyr</li>
-<li>tree</li>
-<li>corrplot</li>
-<li>Rmisc</li>
-<li>ggrepel</li>
-<li>randomForest</li>
-<li>psych</li>
-<li>glmnet</li>
-<li>xgboost</li>
-<li>SuperLearner</li>
-<li>leaps</li>
-<li>nnet</li>
-<li>rpart</li>
-<li>gbm</li>
-<li>Metrics</li>
-<li>devtools</li>
-<li>parallel</li>
+<li>ggplot2 (grafici per l'analisi esplorativa)</li>
+<li>VIM (importanza variabili random forest)</li>
+<li>rpart (alberi di regressione)</li>
+<li>caret (costruzione modelli)</li>
+<li>tree (alberi di regressione)</li>
+<li>corrplot (grafici per correlazione)</li>
+<li>randomForest (modello random forest)</li>
+<li>nnet (utilizzata per modello multinomiale)</li>
+<li>gbm (modello boosting)</li>
+<li>Metrics (utilizzato per rmsle)</li>
+<li>devtools (utilizzato per gbm)</li>
 </ul>
 </div>
 <div id="r-code-to-reproduce-the-last-submission" class="section level3">
@@ -197,16 +185,11 @@ library(plyr)
 library(dplyr)
 library(corrplot)
 library(caret)
-library(gridExtra)
-library(scales)
-library(Rmisc)
-library(ggrepel)
 library(randomForest)
-library(psych)
-library(xgboost)
-library(glmnet)
-library(SuperLearner)
-require(leaps)
+library(gbm)
+library(Metrics)
+library(&quot;devtools&quot;)
+#install_github(&quot;gbm-developers/gbm&quot;)
 
 train_house &lt;- read.csv(&quot;http://bee-fore.s3-eu-west-1.amazonaws.com/datasets/60.csv&quot;,
                         header = TRUE, stringsAsFactors = FALSE)
@@ -540,13 +523,6 @@ test&lt;-train_rim[-sel,]
 #   coord_flip() + theme(legend.position=&quot;none&quot;)
 
 # MODELLI -----------------------------------------------------------------------------------
-
-library(gbm)
-library(Metrics)
-library(&quot;devtools&quot;)
-library(parallel)
-
-#install_github(&quot;gbm-developers/gbm&quot;)
 
 set.seed(156)
 fit &lt;- gbm(log10(SalePrice)~., data=train, distribution=&quot;gaussian&quot;, cv.folds=10, shrinkage = 0.01, n.trees=1000, interaction.depth = 5)
